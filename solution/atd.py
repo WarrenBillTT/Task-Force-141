@@ -23,14 +23,11 @@ def team_of_each_track(meta_path):
     return np.array([HOME if t == team_ids[0] else AWAY for t in slots], dtype=np.int8)
 
 
-def _xy(tokens):
-    """tokens of 'x,y,s' triples -> (n, 2) float32 array, NaN where unobserved."""
-    arr = np.array(tokens, dtype=np.float32).reshape(-1, 3)
-    return arr[:, :2]
-
-
 def load_atd(raw_path, meta_path, n_frames, pitch):
-    """Return (ball[N,2], players[N,S,2], team[S]) in metres. Unobserved entries are NaN."""
+    """Return (ball[N,2], players[N,S,2], speed[N,S], team[S]).
+
+    Positions in metres, speed in m/s as the tracker reports it. Unobserved entries are NaN.
+    """
     length, width = pitch
     team = team_of_each_track(meta_path)
     n_slots = len(team)
@@ -38,6 +35,7 @@ def load_atd(raw_path, meta_path, n_frames, pitch):
 
     ball = np.full((n_frames, 2), np.nan, dtype=np.float32)
     players = np.full((n_frames, n_slots, 2), np.nan, dtype=np.float32)
+    speed = np.full((n_frames, n_slots), np.nan, dtype=np.float32)
 
     with open(raw_path) as handle:
         for line in handle:
@@ -49,11 +47,11 @@ def load_atd(raw_path, meta_path, n_frames, pitch):
                 continue
             tokens = parts[1].replace(";", ",").strip(",").split(",")
             if tokens and tokens[0]:
-                xy = _xy(tokens)
-                k = min(len(xy), n_slots)
-                players[i, :k] = xy[:k]
+                xys = np.array(tokens, dtype=np.float32).reshape(-1, 3)[:n_slots]
+                players[i, :len(xys)] = xys[:, :2]
+                speed[i, :len(xys)] = xys[:, 2]
             ball_tokens = parts[2].strip().split(",")
             if len(ball_tokens) >= 2:
                 ball[i] = np.array(ball_tokens[:2], dtype=np.float32)
 
-    return ball * scale, players * scale, team
+    return ball * scale, players * scale, speed, team

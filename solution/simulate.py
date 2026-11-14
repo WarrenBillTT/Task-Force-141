@@ -125,25 +125,33 @@ def simulate(n_frames=20000, blocks=((1, 500, 9500), (2, 10500, 19500)), seed=0,
             ball[t:t + gap] = np.nan
             t += gap
         t += 1
+    # Speed from the clean positions, like a tracker's smoothed estimate. The jumps where a new
+    # segment places everyone afresh are not running, so drop them.
+    step = np.linalg.norm(np.diff(players, axis=0), axis=2) * 25.0
+    speed = np.vstack([step[:1], step])
+    speed[speed > 12.0] = np.nan
+
     players = players + rng.normal(0, 0.15, size=players.shape)
     ball = np.clip(ball, [-3.0, -3.0], [pitch[0] + 3.0, pitch[1] + 3.0])
-    players[rng.random(players.shape[:2]) < 0.02] = np.nan
+    lost = rng.random(players.shape[:2]) < 0.02
+    players[lost] = np.nan
+    speed[lost] = np.nan
     return {"ball": ball.astype(np.float32), "players": players.astype(np.float32),
-            "team": team, "gt": gt, "blocks": list(blocks)}
+            "speed": speed.astype(np.float32), "team": team, "gt": gt, "blocks": list(blocks)}
 
 
 def write_atd(sim, raw_path, meta_path, pitch=(105.3, 68.0)):
     """Write the simulation as ATD txt + metadata xml, in the real format (0-1 coordinates)."""
     scale = np.array(pitch)
 
-    def fmt(xy):
+    def fmt(xy, speed=0.0):
         if np.isnan(xy[0]) or np.isnan(xy[1]):
             return "NaN,NaN,NaN"
-        return "{:.5f},{:.5f},0.0".format(xy[0] / scale[0], xy[1] / scale[1])
+        return "{:.5f},{:.5f},{:.2f}".format(xy[0] / scale[0], xy[1] / scale[1], speed)
 
     with open(raw_path, "w") as handle:
         for i in range(len(sim["ball"])):
-            groups = ";".join(fmt(p) for p in sim["players"][i])
+            groups = ";".join(fmt(p, s) for p, s in zip(sim["players"][i], sim["speed"][i]))
             handle.write("{}:{}:{}\n".format(i + 1, groups, fmt(sim["ball"][i])))
 
     players = "".join('<Player id="P{}" teamId="{}"/>'.format(s, "HOME" if t == 0 else "AWAY")

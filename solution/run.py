@@ -27,11 +27,22 @@ from games import GAME, GAMES, half_video_blocks, require, source_frames  # noqa
 SET_PIECE_CODE = "set pieces"
 SECOND_HALF_KICKOFF = 113742  # published in DATA.md / FAQ.md and starter/load_smart_tagging.py
 
+# Smart Tagging phases and what their Team tag means. In the first group the tagged team has the
+# ball, in the second it is defending. Left out: the box codes (scrambles, both teams on the ball),
+# long balls (often lost) and goals (mostly celebration, when the ball is dead).
+WITH_BALL = {"build up", "progression", "creating chances", "ball in final third",
+             "attacking transition"}
+WITHOUT_BALL = {"defending in attacking third", "defending in middle third",
+                "defending in defensive third", "defensive transition"}
+TAG_TEAMS = {"barcelona": 1, "atletic club": -1}  # spelled as in the tagging file; N/A -> 0
 
-def build_signals(ball_raw, players, team, pitch, set_piece_intervals=()):
+
+def build_signals(ball_raw, players, speed, team, pitch, set_piece_intervals=(), tag_side=None):
     """Everything the state model needs, for the whole video."""
     ball, observed, filled = signals.clean_ball(ball_raw)
     dist_home, dist_away = signals.team_distances(ball, players, team)
+    if tag_side is None:
+        tag_side = np.zeros(len(ball), dtype=np.float32)
     return {
         "dist_home": dist_home,
         "dist_away": dist_away,
@@ -40,6 +51,8 @@ def build_signals(ball_raw, players, team, pitch, set_piece_intervals=()):
         "oob": signals.out_of_play(ball, pitch),
         "near_line": signals.near_boundary(ball, pitch),
         "set_piece": signals.window_mask(len(ball), set_piece_intervals),
+        "team_speed": signals.team_speed(speed),
+        "tag_side": tag_side,
     }
 
 
@@ -57,10 +70,38 @@ def predict(sig, blocks, cfg, kickoff2=None, n_frames=None):
     return labels
 
 
-def set_piece_intervals(data_dir):
+def load_tagging(data_dir, n_frames):
+    """Set-piece intervals, and per frame +1 / -1 / 0 for "tags say home / away / nothing"."""
     from starter.load_smart_tagging import load
-    return [(e["start_frame"], e["end_frame"]) for e in load(GAME, data_dir)
-            if (e["code"] or "").strip().lower() == SET_PIECE_CODE]
+    set_pieces = []
+    votes = np.zeros(n_frames, dtype=np.int16)
+    for e in load(GAME, data_dir):
+        code = (e["code"] or "").strip().lower()
+        start, end = max(0, e["start_frame"]), min(n_frames, e["end_frame"])
+        if code == SET_PIECE_CODE:
+            set_pieces.append((start, end))
+            continue
+        side = TAG_TEAMS.get((e["tags"].get("Team") or "").strip().lower(), 0)
+        if code in WITH_BALL:
+            votes[start:end] += side
+        elif code in WITHOUT_BALL:
+            votes[start:end] -= side
+    # Overlapping tags that disagree cancel out.
+    return set_pieces, np.sign(votes).astype(np.float32)
+
+
+def summary(labels, blocks):
+    """Possession and stoppage counts over the graded frames. Uses no ground truth."""
+    possessions = stoppages = dead = graded = 0
+    for _, first, last in blocks:
+        part = labels[first:last + 1]
+        starts = np.flatnonzero(np.r_[True, part[1:] != part[:-1]])
+        possessions += int(np.isin(part[starts], ["H", "A"]).sum())
+        stoppages += int((part[starts] == "D").sum())
+        dead += int((part == "D").sum())
+        graded += len(part)
+    return "graded: {:.1f}% dead, {} stoppages, {} possessions".format(
+        100.0 * dead / graded, stoppages, possessions)
 
 
 def write_csv(path, labels):
@@ -87,19 +128,22 @@ def main():
     pitch = GAMES[GAME]["pitch"]
 
     print("reading tracking ...")
-    ball, players, team = atd.load_atd(raw_path, meta_path, n_frames, pitch)
+    ball, players, speed, team = atd.load_atd(raw_path, meta_path, n_frames, pitch)
 
-    intervals = []
+    intervals, tag_side = [], None
     if not args.no_tagging:
-        intervals = set_piece_intervals(args.data_dir)
-        print("smart tagging: {} set-piece windows".format(len(intervals)))
+        intervals, tag_side = load_tagging(args.data_dir, n_frames)
+        print("smart tagging: {} set-piece windows, team phases on {:.0f}% of frames".format(
+            len(intervals), 100 * np.mean(tag_side != 0)))
 
-    sig = build_signals(ball, players, team, pitch, intervals)
-    labels = predict(sig, half_video_blocks(GAME), cfg, SECOND_HALF_KICKOFF, n_frames)
+    sig = build_signals(ball, players, speed, team, pitch, intervals, tag_side)
+    blocks = half_video_blocks(GAME)
+    labels = predict(sig, blocks, cfg, SECOND_HALF_KICKOFF, n_frames)
     write_csv(args.out, labels)
 
     counts = {k: int((labels == k).sum()) for k in "HADX"}
     print("wrote {}  rows={}  {}".format(args.out, len(labels), counts))
+    print(summary(labels, blocks))
     print("next: python evaluation/validate_submission.py {}".format(args.out))
 
 
