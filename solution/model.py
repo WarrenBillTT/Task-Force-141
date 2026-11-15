@@ -36,6 +36,20 @@ class Config:
     # --- cleanup (frames) ---
     min_alive: int = 38            # a team run shorter than ~1.5 s is a touch/deflection, not control
     min_dead: int = 25             # a dead-ball run shorter than 1 s is noise
+    # --- decoder selection (E4). Defaults reproduce the original pipeline exactly. ---
+    decoder: str = "viterbi"       # "viterbi" | "hsmm"   (handled by --decoder, not a numeric flag)
+    refine: int = 0                # 1: move boundaries to local signal evidence (solution/refine.py)
+    ensemble: int = 1              # K > 1: consensus over K parameter variants (solution/ensemble.py)
+    # --- explicit-duration decoder (solution/hsmm.py): priors from general football knowledge ---
+    hsmm_step: int = 5             # frames. Coarse decoding grid (0.2 s); boundaries re-polished at 1 frame
+    hsmm_max_seconds: float = 150.0  # s. Longest single segment; longer ones chain with a penalty
+    alive_median_s: float = 7.0    # s. Median uninterrupted possession spell (a few passes, one phase of play)
+    alive_sigma: float = 1.0       # log-normal shape: ~5-95% is 1.4-36 s, i.e. sub-second to ~a minute, heavy tail
+    dead_median_s: float = 12.0    # s. Median stoppage (throw-in ~8 s, free kick / goal kick / corner ~15-25 s)
+    dead_sigma: float = 0.7        # ~5-95% is 3.8-38 s: never under a couple of seconds, injuries give the tail
+    dur_scale: float = 1.0         # weight of the log duration prior (1 = take it as a proper log-density)
+    hsmm_penalty_scale: float = 0.5  # switch/dead penalties are scaled by this in the HSMM: the duration
+                                     # prior already charges short segments, so counting both in full double-pays
 
 
 def emissions(sig, cfg):
@@ -132,5 +146,8 @@ def merge_short_runs(path, cfg):
 
 def decode(sig, cfg):
     """Evidence for one contiguous stretch of play -> label path (0/1/2 per frame)."""
+    if cfg.decoder != "viterbi" or cfg.refine or cfg.ensemble > 1:
+        import ensemble  # lazy: ensemble imports this module
+        return ensemble.decode_full(sig, cfg)
     path = viterbi(emissions(sig, cfg), transition_matrix(cfg))
     return merge_short_runs(path, cfg)
