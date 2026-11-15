@@ -36,6 +36,7 @@ def build_signals(ball_raw, players, team, pitch, set_piece_intervals=()):
         "dist_home": dist_home,
         "dist_away": dist_away,
         "speed": signals.ball_speed(ball),
+        "ball_dv": signals.ball_velocity_change(ball),  # only used by refine.py (optional there)
         "ball_ok": observed | filled,
         "oob": signals.out_of_play(ball, pitch),
         "near_line": signals.near_boundary(ball, pitch),
@@ -77,10 +78,18 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--data-dir", default=None, help="default: ./data or $MTAH_DATA_DIR")
     parser.add_argument("--no-tagging", action="store_true", help="ignore Smart Tagging")
+    parser.add_argument("--decoder", choices=("viterbi", "hsmm"), default=model.Config.decoder,
+                        help="state decoder (default viterbi)")
+    parser.add_argument("--refine", action="store_true", help="refine boundaries with local signals")
+    parser.add_argument("--ensemble", type=int, default=model.Config.ensemble, metavar="N",
+                        help="consensus over N parameter variants (default 1 = off)")
+    special = {"decoder", "refine", "ensemble"}
     for name, value in vars(model.Config()).items():
-        parser.add_argument("--" + name.replace("_", "-"), type=type(value), default=value)
+        if name not in special:
+            parser.add_argument("--" + name.replace("_", "-"), type=type(value), default=value)
     args = parser.parse_args()
-    cfg = model.Config(**{k: getattr(args, k) for k in vars(model.Config())})
+    cfg = model.Config(**{k: getattr(args, k) for k in vars(model.Config()) if k not in special})
+    cfg.decoder, cfg.refine, cfg.ensemble = args.decoder, int(args.refine), args.ensemble
 
     meta_path, raw_path = require(["atd_meta", "atd_raw"], GAME, args.data_dir)
     n_frames = source_frames("tactical", GAME)

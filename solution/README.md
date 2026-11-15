@@ -35,6 +35,13 @@ Deterministic and about 5 s of compute on top of reading the tracking file.
 All thresholds are physical quantities set from football knowledge. None were fitted to the
 public 5 minutes or to anything about this match.
 
+## Decoder upgrade (HSMM, boundary refinement, consensus)
+
+Optional, off by default: `--decoder hsmm`, `--refine`, `--ensemble N` (modules `hsmm.py`,
+`refine.py`, `ensemble.py`; label-free check in `stability.py`; tests in `test_decoder.py`).
+Design, parameters, synthetic comparison, timing, limitations and the exact commands to compare
+decoders on the real data without labels are in [NOTES_E.md](NOTES_E.md).
+
 ## Status, honestly
 
 Built and tested **without the match data** (it is gated). The synthetic test checks the code path

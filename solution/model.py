@@ -50,6 +50,18 @@ class Config:
     dur_scale: float = 1.0         # weight of the log duration prior (1 = take it as a proper log-density)
     hsmm_penalty_scale: float = 0.5  # switch/dead penalties are scaled by this in the HSMM: the duration
                                      # prior already charges short segments, so counting both in full double-pays
+    # --- boundary refinement (solution/refine.py) ---
+    refine_window_s: float = 2.0   # s. A boundary may move at most this far (decoder error is ~ a second)
+    refine_radius: float = 3.0     # m. Team cue only counts when someone is this close (else ball in flight)
+    refine_margin: float = 1.0     # m. Distance gap at which the "new team is nearer" cue saturates (tanh scale)
+    refine_slow_weight: float = 0.0  # cue strength of a slow ball for D. 0: a slow ball is ambiguous (a ball under
+                                     # control or a held restart is slow on BOTH sides of the boundary, so it
+                                     # only drags the boundary toward the window edge); the decisive cues are
+                                     # "left the pitch" and "clearly fast again"
+    refine_dv_ref: float = 8.0     # m/s. Velocity change that counts as a full kick/trap/deflection
+    refine_dv_weight: float = 4.0  # cue-frames of credit for a boundary on a ball-velocity change
+    refine_touch_weight: float = 6.0  # cue-frames of credit for a boundary on a "touch" score of 1 (if present)
+    refine_drift: float = 0.02     # cue-frames per frame of displacement: keep the decoder's position on a tie
 
 
 def emissions(sig, cfg):

@@ -52,6 +52,23 @@ def ball_speed(ball, half_window=5):
     return np.hypot(*(ahead - behind).T) * FPS / (2.0 * half_window)
 
 
+def ball_velocity_change(ball, lag=3):
+    """Per frame, |v_after - v_before| in m/s: how abruptly the ball's velocity vector changes.
+
+    v_before covers [i-lag, i] and v_after covers [i, i+lag] (lag=3 is ~0.12 s). A kick, a trap or a
+    deflection shows up as a spike; a ball rolling or flying freely gives ~0 (an unforced ball has
+    near-constant velocity). It captures speed and direction change in one number. NaN where either
+    side is unobserved.
+    """
+    n = len(ball)
+    out = np.full(n, np.nan, dtype=np.float32)
+    if n <= 2 * lag:
+        return out
+    v = (ball[lag:] - ball[:-lag]) * FPS / float(lag)       # v[k] covers [k, k+lag]
+    out[lag:n - lag] = np.hypot(*(v[lag:] - v[:-lag]).T)    # after = v[i], before = v[i-lag]
+    return out
+
+
 def team_distances(ball, players, team):
     """Distance from the ball to the nearest home and nearest away player. inf if none tracked."""
     out = []
