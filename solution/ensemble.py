@@ -127,3 +127,4 @@ def decode_full(sig, cfg):
     if cfg.ensemble > 1:
         return decode_ensemble(sig, cfg)
     return decode_single(sig, cfg)
+

@@ -192,3 +192,4 @@ def _polish(segments, csum, step):
 def decode(emit, cfg, step=None):
     """Label path (int8 per frame) of the best explicit-duration segmentation."""
     return segments_to_path(decode_segments(emit, cfg, step), len(emit))
+
