@@ -38,7 +38,7 @@ class Config:
     min_dead: int = 25             # a dead-ball run shorter than 1 s is noise
     # --- touch / control evidence (solution/touch.py, Approach A) ---
     use_touch: int = 1             # 1 (--touch): use ctrl_logodds; 0 (--no-touch): proximity only
-    touch_weight: float = 0.85     # blend weight on ctrl_logodds vs nearest-player proximity llr
+    touch_weight: float = 0.80     # blend weight on ctrl_logodds vs nearest-player proximity llr
 
 
 def emissions(sig, cfg):
@@ -61,11 +61,14 @@ def emissions(sig, cfg):
 
     if cfg.use_touch and "ctrl_logodds" in sig:
         ctrl = np.nan_to_num(sig["ctrl_logodds"], nan=0.0)
-        has_ctrl = np.abs(ctrl) > 1e-6
-        dead_cand = slow & (sig["near_line"] | sig["set_piece"] | (nearest > cfg.idle_distance))
-        ctrl_scale = np.where(dead_cand, np.where(known, 0.5 * weight, 0.0), 1.0)
-        ctrl_team = np.where(ball_ok & ~sig["oob"], 0.5 * ctrl_scale * ctrl, 0.0)
-        team = np.where(has_ctrl, cfg.touch_weight * ctrl_team + (1.0 - cfg.touch_weight) * prox_team, prox_team)
+        conf = np.clip(np.nan_to_num(sig.get("ctrl_conf", np.abs(ctrl) / cfg.gap_cap), nan=0.0), 0.0, 1.0)
+        dead_cand = sig["oob"] | sig["near_line"] | (slow & (sig["set_piece"] | (nearest > cfg.idle_distance)))
+        ctrl_team = np.where(ball_ok & ~dead_cand, 0.5 * ctrl, 0.0)
+        flight_factor = np.where(known, 1.0 - 0.40 * np.exp(-(np.where(known, nearest, 0.0) / 2.2) ** 2), 1.0)
+        w = np.where(ball_ok & ~dead_cand, np.clip(cfg.touch_weight * (conf ** 2) * flight_factor, 0.0, 1.0), 0.0)
+        agree = (ctrl_team * prox_team) > 0
+        stronger = np.where(np.abs(ctrl_team) >= np.abs(prox_team), ctrl_team, prox_team)
+        team = np.where(agree, stronger, w * ctrl_team + (1.0 - w) * prox_team)
     else:
         team = prox_team
 

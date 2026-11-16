@@ -45,3 +45,20 @@ tracker, and what the Smart Tagging set-piece windows cover.
 
 Do not choose parameters by the public 5-minute score (see EVALUATION.md: it picks the wrong
 smoothing window even for the baseline).
+
+## Approach A: Touch and control-based team evidence
+
+`solution/touch.py` upgrades team evidence from "who is nearest the ball" to "who last controlled
+the ball" using smoothed ball kinematics, NMS touch candidates, carry/dribble and passing-sequence
+control episodes, and a state machine that ignores lone opposing deflections. It is enabled by
+default (`--touch`) and can be disabled with `--no-touch` to reproduce the proximity-only baseline
+bit-for-bit.
+
+```bash
+python solution/touch_report.py                       # aggregate touch/control stats (local data)
+python solution/run.py --touch --out evaluation/results/approach_a.csv
+python solution/run.py --no-touch --out evaluation/results/baseline_viterbi.csv
+python -I solution/test_touch.py                      # unit tests, invariants, synthetic benchmark
+```
+
+See [NOTES_A.md](NOTES_A.md) for parameter justifications, synthetic benchmarks, and failure modes.

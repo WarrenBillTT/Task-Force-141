@@ -303,6 +303,115 @@ def test_timing_full_half():
     print(f"timing (80,000 frames, 1 full half): {dt:.2f} s")
 
 
+def _match_touches(pred_frames, gt_frames, tol=3):
+    """Greedy 1-to-1 matching of predicted touches to ground-truth touches within +/- tol frames."""
+    used = set()
+    tp = 0
+    for p in pred_frames:
+        best_i = None
+        best_d = tol + 1
+        for i, g in enumerate(gt_frames):
+            if i not in used:
+                d = abs(p - g)
+                if d <= tol and d < best_d:
+                    best_d = d
+                    best_i = i
+        if best_i is not None:
+            used.add(best_i)
+            tp += 1
+    prec = tp / max(len(pred_frames), 1)
+    rec = tp / max(len(gt_frames), 1)
+    return prec, rec
+
+
+def _score_labels(gt, labels):
+    res = pm.evaluate(pm.label_codes(gt), pm.label_codes(labels))
+    return res["spell_f1_mean"], res["macro_f1"]
+
+
+def test_synthetic_benchmark(seeds=(0, 1, 2, 3, 4, 5)):
+    """Multi-seed regression guard: touch prec/rec (+/-3 frames) & spellF1 (--touch vs --no-touch)."""
+    scenarios = [
+        ("standard", {}),
+        ("stress40", dict(missing_rate=0.40, jitter_std=0.25, spike_rate=0.005,
+                          id_swap_rate=0.01, deflection_rate=0.35)),
+    ]
+    print("--- synthetic benchmark (seeds={}) ---".format(len(seeds)))
+    for name, kw in scenarios:
+        precs, recs = [], []
+        sf1_t, mf1_t = [], []
+        sf1_nt, mf1_nt = [], []
+        for s in seeds:
+            sim = simulate.simulate(seed=s, pitch=PITCH, **kw)
+            _, obs, _ = signals.clean_ball(sim["ball"])
+            sig = run.build_signals(sim["ball"], sim["players"], sim["team"], PITCH)
+
+            gt_t = [t for t, _, _, _ in sim["touches"] if np.any(obs[max(0, t - 3):t + 4])]
+            pred_t = [int(p) for p in np.flatnonzero(sig["touch"] > 0) if sim["gt"][p] in ("H", "A")]
+            p, r = _match_touches(pred_t, gt_t, tol=3)
+            precs.append(p)
+            recs.append(r)
+
+            lab_t = run.predict(sig, sim["blocks"], model.Config(use_touch=1), None, len(sim["ball"]))
+            lab_nt = run.predict(sig, sim["blocks"], model.Config(use_touch=0), None, len(sim["ball"]))
+            st, mt = _score_labels(sim["gt"], lab_t)
+            snt, mnt = _score_labels(sim["gt"], lab_nt)
+            sf1_t.append(st)
+            mf1_t.append(mt)
+            sf1_nt.append(snt)
+            mf1_nt.append(mnt)
+
+        print(
+            "{:<9s} | touch P={:.3f}+/-{:.3f} R={:.3f}+/-{:.3f} | "
+            "spellF1 touch={:.4f}+/-{:.4f} (macro {:.4f}) | "
+            "no-touch={:.4f}+/-{:.4f} (macro {:.4f})".format(
+                name,
+                np.mean(precs), np.std(precs),
+                np.mean(recs), np.std(recs),
+                np.mean(sf1_t), np.std(sf1_t), np.mean(mf1_t),
+                np.mean(sf1_nt), np.std(sf1_nt), np.mean(mf1_nt),
+            )
+        )
+        assert np.mean(recs) >= 0.70, f"{name}: touch recall unexpectedly low ({np.mean(recs):.3f})"
+        assert np.mean(sf1_t) >= np.mean(sf1_nt), (
+            f"{name}: --touch ({np.mean(sf1_t):.4f}) regressed vs --no-touch ({np.mean(sf1_nt):.4f})"
+        )
+
+
+def test_perturbation_stability(seeds=(0, 1, 2)):
+    """Label-free stability: drop extra ball bursts (~20%) + add 0.15m jitter, measure spellF1 agreement."""
+    agreements = []
+    macro_agreements = []
+    for s in seeds:
+        sim = simulate.simulate(seed=s, pitch=PITCH)
+        sig_clean = run.build_signals(sim["ball"], sim["players"], sim["team"], PITCH)
+        lab_clean = run.predict(sig_clean, sim["blocks"], model.Config(use_touch=1), None, len(sim["ball"]))
+
+        rng = np.random.default_rng(1000 + s)
+        ball_p = sim["ball"].copy()
+        ball_p = ball_p + rng.normal(0, 0.15, size=ball_p.shape).astype(np.float32)
+        graded_idx = np.concatenate([np.arange(f, l + 1) for _, f, l in sim["blocks"]])
+        base_obs = float(np.mean(~np.isnan(ball_p[graded_idx, 0])))
+        target_obs = max(0.35, base_obs - 0.20)
+        tries = 0
+        while float(np.mean(~np.isnan(ball_p[graded_idx, 0]))) > target_obs and tries < 1000:
+            tries += 1
+            start = int(rng.choice(graded_idx))
+            gap = int(rng.integers(40, 90)) if rng.random() < 0.25 else int(rng.geometric(1 / 25.0))
+            ball_p[start:min(len(ball_p), start + gap)] = np.nan
+
+        sig_pert = run.build_signals(ball_p, sim["players"], sim["team"], PITCH)
+        lab_pert = run.predict(sig_pert, sim["blocks"], model.Config(use_touch=1), None, len(sim["ball"]))
+        sf1, mf1 = _score_labels(lab_clean, lab_pert)
+        agreements.append(sf1)
+        macro_agreements.append(mf1)
+
+    print("perturbation stability (3 seeds, -20% ball + 0.15m jitter): spellF1={:.4f}+/-{:.4f} macroF1={:.4f}+/-{:.4f}".format(
+        np.mean(agreements), np.std(agreements), np.mean(macro_agreements), np.std(macro_agreements)
+    ))
+    assert np.mean(agreements) >= 0.80, f"perturbation stability too low: {np.mean(agreements):.4f}"
+
+
 def main():
     tests = [
         test_pass_between_teammates,
@@ -315,11 +424,13 @@ def main():
         test_aerial_duel_contested,
         test_invariants_and_no_touch,
         test_timing_full_half,
+        test_synthetic_benchmark,
+        test_perturbation_stability,
     ]
     for fn in tests:
         fn()
         print(f"PASS {fn.__name__}")
-    print("ALL UNIT TESTS & INVARIANTS PASSED")
+    print("ALL TESTS PASSED")
 
 
 if __name__ == "__main__":

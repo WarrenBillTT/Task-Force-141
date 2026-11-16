@@ -8,8 +8,13 @@ regression guard for the code, NOT an estimate of real-match accuracy.
 """
 
 import os
+import site
 import sys
 import tempfile
+
+_user_site = site.getusersitepackages()
+if _user_site and os.path.isdir(_user_site) and _user_site not in sys.path:
+    sys.path.append(_user_site)
 
 import numpy as np
 

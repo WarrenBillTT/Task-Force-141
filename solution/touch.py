@@ -26,10 +26,11 @@ class TouchConfig:
 
     # --- A2: touch candidate detection and attribution ---
     contact_radius: float = 2.2    # m. Foot reach (~0.7 m) + ball/player ATD tracking error (~1.5 m)
-    min_touch_speed: float = 4.2   # m/s. Max(v_before, v_after) must reach at least a soft pass
-    min_dv: float = 5.2            # m/s. Vector velocity jump |v_after - v_before| over 0.20 s (~26 m/s^2)
-    min_speed_jump: float = 4.0    # m/s. Scalar speed jump ||v_after| - |v_before|| for kick/trap
+    min_touch_speed: float = 6.5   # m/s. Max(v_before, v_after) must reach at least a crisp pass
+    min_dv: float = 6.5            # m/s. Vector velocity jump |v_after - v_before| (>3 sigma ATD jitter)
+    min_speed_jump: float = 4.8    # m/s. Scalar speed jump ||v_after| - |v_before|| for kick/trap
     min_turn_deg: float = 38.0     # deg. Redirection angle threshold when both sides are moving
+    fast_flight_speed: float = 7.5 # m/s. Straight fast flight (> this before & after) requires a turn
     dv_ref: float = 12.0           # m/s. Reference velocity jump giving full dynamic confidence
     speed_jump_ref: float = 10.0   # m/s. Reference scalar speed jump giving full dynamic confidence
     turn_ref_deg: float = 90.0     # deg. Right-angle redirect reference for dynamic confidence
@@ -41,7 +42,7 @@ class TouchConfig:
     carry_max_dv: float = 4.5      # m/s. Max |v_ball - v_player| for ball moving with holder
     carry_max_ball_speed: float = 8.5  # m/s. Upper bound on ball speed during a sprint dribble
     min_carry_s: float = 0.52      # s (13 frames). Min continuous carry/hold to establish control
-    carry_bridge_frames: int = 3   # frames (0.12 s). Bridge tiny tracker dropouts inside a carry
+    carry_bridge_frames: int = 12  # frames (0.48 s). Bridge short tracker dropouts inside a carry
     swap_link_radius: float = 2.2  # m. Spatial continuity radius to link same-team track ID swaps
     max_pass_interval_s: float = 2.8  # s (70 frames). Max gap between consecutive same-team touches
     duel_pair_s: float = 0.28      # s (7 frames). Opposing touches closer than this indicate a 50-50 duel
@@ -49,7 +50,8 @@ class TouchConfig:
     # --- A4/A5: frame-level control log-odds ---
     ctrl_gain: float = 1.3         # log-odds scale per unit of control confidence
     ctrl_cap: float = 1.2          # cap on |ctrl_logodds|, matching model.Config.gap_cap
-    flight_decay_s: float = 12.0   # s. Exponential confidence decay while ball is loose/in flight
+    flight_decay_s: float = 3.0    # s. Physical flight hang-time scale for confidence decay
+    filled_conf_scale: float = 0.35  # confidence scale on interpolated (non-observed) filled frames
     oob_reset_s: float = 1.0       # s (25 frames). Sustained out-of-bounds resets active control
 
 
@@ -160,30 +162,36 @@ def ball_dynamics(ball, observed=None, filled=None, cfg=None):
     speed_before[ok_b] = np.hypot(vel_before[ok_b, 0], vel_before[ok_b, 1])
     speed_after[ok_a] = np.hypot(vel_after[ok_a, 0], vel_after[ok_a, 1])
 
+    has_obs_before = np.zeros(n, dtype=bool)
+    for k in range(2, w + 3):
+        if k < n:
+            has_obs_before[k:] |= valid_obs[:-k]
+    ok_dyn = ok_both & has_obs_before
+
     dv = np.zeros(n, dtype=np.float32)
     dspeed = np.zeros(n, dtype=np.float32)
     accel = np.zeros(n, dtype=np.float32)
     turn_angle = np.zeros(n, dtype=np.float32)
 
-    if np.any(ok_both):
-        dvec = vel_after[ok_both] - vel_before[ok_both]
+    if np.any(ok_dyn):
+        dvec = vel_after[ok_dyn] - vel_before[ok_dyn]
         dv_val = np.hypot(dvec[:, 0], dvec[:, 1])
-        dv[ok_both] = dv_val
-        dspeed[ok_both] = np.abs(speed_after[ok_both] - speed_before[ok_both])
-        dt_mid = 0.5 * (dt_before[ok_both] + dt_after[ok_both]) / float(FPS)
-        accel[ok_both] = dv_val / np.maximum(dt_mid, 1.0 / FPS)
+        dv[ok_dyn] = dv_val
+        dspeed[ok_dyn] = np.abs(speed_after[ok_dyn] - speed_before[ok_dyn])
+        dt_mid = 0.5 * (dt_before[ok_dyn] + dt_after[ok_dyn]) / float(FPS)
+        accel[ok_dyn] = dv_val / np.maximum(dt_mid, 1.0 / FPS)
 
-        sb = speed_before[ok_both]
-        sa = speed_after[ok_both]
+        sb = speed_before[ok_dyn]
+        sa = speed_after[ok_dyn]
         moving = (sb >= cfg.min_turn_speed) & (sa >= cfg.min_turn_speed)
         if np.any(moving):
-            vb_m = vel_before[ok_both][moving]
-            va_m = vel_after[ok_both][moving]
+            vb_m = vel_before[ok_dyn][moving]
+            va_m = vel_after[ok_dyn][moving]
             denom = sb[moving] * sa[moving]
             cos_t = np.clip(np.sum(vb_m * va_m, axis=1) / np.maximum(denom, 1e-6), -1.0, 1.0)
-            ang = np.zeros(int(ok_both.sum()), dtype=np.float32)
+            ang = np.zeros(int(ok_dyn.sum()), dtype=np.float32)
             ang[moving] = np.arccos(cos_t)
-            turn_angle[ok_both] = ang
+            turn_angle[ok_dyn] = ang
 
     # Guarantee zero dynamics evidence on non-observed or filled frames
     vel_before[~valid_obs] = np.nan
@@ -240,14 +248,16 @@ def detect_touches(sig_so_far, dyn, cfg=None):
     turn = dyn["turn_angle"]
 
     max_s = np.maximum(sb, sa)
+    min_s = np.minimum(sb, sa)
     both_moving = (sb >= cfg.min_turn_speed) & (sa >= cfg.min_turn_speed)
     turn_thresh = np.deg2rad(cfg.min_turn_deg)
 
     abrupt = (dv >= cfg.min_dv) & ((dspeed >= cfg.min_speed_jump) | (both_moving & (turn >= turn_thresh)))
+    straight_fast = (min_s > cfg.fast_flight_speed) & (turn < turn_thresh) & (dv < 0.35 * max_s)
     in_range = valid_obs & np.isfinite(nearest) & (nearest <= cfg.contact_radius)
     if "oob" in sig_so_far:
         in_range = in_range & ~np.asarray(sig_so_far["oob"], dtype=bool)
-    cand = in_range & (max_s >= cfg.min_touch_speed) & abrupt
+    cand = in_range & (max_s >= cfg.min_touch_speed) & abrupt & ~straight_fast
 
     if not np.any(cand):
         return touch, touch_team, uncontested_touch
@@ -534,6 +544,7 @@ def compute_control_evidence(n, episodes, touch, touch_team, uncontested_touch, 
         return ctrl_logodds, ctrl_conf
 
     ball_ok = dyn["ball_ok"]
+    valid_obs = dyn["valid_obs"]
     oob = np.asarray(sig_so_far["oob"], dtype=bool) if "oob" in sig_so_far else np.zeros(n, dtype=bool)
     decay = float(np.exp(-1.0 / (max(cfg.flight_decay_s, 0.1) * FPS)))
     oob_limit = max(1, int(round(cfg.oob_reset_s * FPS)))
@@ -596,9 +607,10 @@ def compute_control_evidence(n, episodes, touch, touch_team, uncontested_touch, 
             cur_conf = 0.0
 
         if cur_team != NONE and ball_ok[t]:
-            ctrl_conf[t] = cur_conf
+            out_conf = cur_conf if valid_obs[t] else cur_conf * cfg.filled_conf_scale
+            ctrl_conf[t] = out_conf
             sign = 1.0 if cur_team == HOME else -1.0
-            ctrl_logodds[t] = sign * min(cfg.ctrl_cap, cfg.ctrl_gain * cur_conf)
+            ctrl_logodds[t] = sign * min(cfg.ctrl_cap, cfg.ctrl_gain * out_conf)
 
     return (
         np.nan_to_num(ctrl_logodds, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32),
