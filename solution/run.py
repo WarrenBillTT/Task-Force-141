@@ -22,6 +22,7 @@ for path in (HERE, ROOT, os.path.join(ROOT, "evaluation")):
 import atd  # noqa: E402
 import model  # noqa: E402
 import signals  # noqa: E402
+import touch  # noqa: E402
 from games import GAME, GAMES, half_video_blocks, require, source_frames  # noqa: E402
 
 SET_PIECE_CODE = "set pieces"
@@ -32,7 +33,7 @@ def build_signals(ball_raw, players, team, pitch, set_piece_intervals=()):
     """Everything the state model needs, for the whole video."""
     ball, observed, filled = signals.clean_ball(ball_raw)
     dist_home, dist_away = signals.team_distances(ball, players, team)
-    return {
+    sig = {
         "dist_home": dist_home,
         "dist_away": dist_away,
         "speed": signals.ball_speed(ball),
@@ -41,6 +42,8 @@ def build_signals(ball_raw, players, team, pitch, set_piece_intervals=()):
         "near_line": signals.near_boundary(ball, pitch),
         "set_piece": signals.window_mask(len(ball), set_piece_intervals),
     }
+    touch.build_touch_signals(ball, players, team, sig, observed=observed, filled=filled)
+    return sig
 
 
 def predict(sig, blocks, cfg, kickoff2=None, n_frames=None):
@@ -77,10 +80,19 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--data-dir", default=None, help="default: ./data or $MTAH_DATA_DIR")
     parser.add_argument("--no-tagging", action="store_true", help="ignore Smart Tagging")
+    touch_group = parser.add_mutually_exclusive_group()
+    touch_group.add_argument("--touch", dest="use_touch", action="store_true",
+                             help="use touch/control team evidence (default)")
+    touch_group.add_argument("--no-touch", dest="use_touch", action="store_false",
+                             help="disable touch/control evidence (reproduce proximity-only baseline)")
+    parser.set_defaults(use_touch=bool(model.Config.use_touch))
+    special = {"use_touch"}
     for name, value in vars(model.Config()).items():
-        parser.add_argument("--" + name.replace("_", "-"), type=type(value), default=value)
+        if name not in special:
+            parser.add_argument("--" + name.replace("_", "-"), type=type(value), default=value)
     args = parser.parse_args()
-    cfg = model.Config(**{k: getattr(args, k) for k in vars(model.Config())})
+    cfg = model.Config(**{k: getattr(args, k) for k in vars(model.Config()) if k not in special})
+    cfg.use_touch = int(args.use_touch)
 
     meta_path, raw_path = require(["atd_meta", "atd_raw"], GAME, args.data_dir)
     n_frames = source_frames("tactical", GAME)
