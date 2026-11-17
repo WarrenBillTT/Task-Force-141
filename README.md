@@ -1,3 +1,49 @@
+# Task Force 141: ball possession submission
+
+This repository holds Task Force 141's entry for More than a Hack 2027, Phase 1. Our method is in
+[solution/](solution/), and [solution/README.md](solution/README.md) explains how it works. The
+rest of this file, from "More than a Hack 2027" down, is the challenge's own README.
+
+## Reproduce our submission file
+
+Tested on Python 3.12 with the versions pinned in [requirements.txt](requirements.txt)
+(numpy 2.5.4, pandas 3.1.1).
+
+1. Install the dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Put the match data bundle in `data/`, keeping the names it arrives with (see [DATA.md](DATA.md)),
+   or point `MTAH_DATA_DIR` at it. The pipeline reads three files from `data/tactical/`: the
+   tracking (`BAR-ATH_tactical_atd.txt` and `BAR-ATH_tactical_atd.xml`) and the Smart Tagging
+   (`BAR-ATH_tactical_smart_tagging.xml`). The match data is not in this repository and must not
+   be added to it.
+
+3. Generate the file:
+
+   ```bash
+   python solution/run.py
+   ```
+
+   This writes `evaluation/results/Task Force 141.csv` (199,319 rows) in under a minute. Use
+   `--out <path>` to write it somewhere else.
+
+4. Check it:
+
+   ```bash
+   python evaluation/validate_submission.py "evaluation/results/Task Force 141.csv"
+   md5sum "evaluation/results/Task Force 141.csv"        # on macOS: md5
+   ```
+
+   The run is deterministic. Our submitted file has the checksum
+   `527999081bf8e7cb43fcfa2aa8d2c8af`, and the same data with the same code gives the same file.
+
+A test on a simulated match checks the code without any data: `python -I solution/test_pipeline.py`.
+
+---
+
 # More than a Hack 2027 — Phase 1: Ball Possession
 
 **Organised by [Metrica Sports](https://metrica-sports.com), [FC Barcelona](https://www.fcbarcelona.com)

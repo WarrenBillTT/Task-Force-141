@@ -1,10 +1,9 @@
-# Everything the evaluation needs. Deliberately two lines.
+# Everything the evaluation and our pipeline in solution/ need. Deliberately two lines.
 #
-# The scorer is dependency-light on purpose: no sklearn, no torch, nothing that pins a Python
-# version. It runs under 3.8 and 3.11 alike and produces identical output, so "it scored
-# differently on my machine" is not a conversation anyone has to have.
+# Pinned to the versions our submission file was generated and checked with, on Python 3.12,
+# so the same data gives the same file. The scorer itself works with any recent numpy and pandas.
 #
 # Optional tooling -- the ATD loader and anything that opens the video -- lives in
 # requirements-starter.txt.
-numpy
-pandas
+numpy==2.5.4
+pandas==3.1.1

@@ -6,10 +6,10 @@ from the provided automatic tracking (ATD) and, optionally, the Smart Tagging.
 ## Run
 
 ```bash
-pip install -r requirements.txt                       # numpy + pandas
+pip install -r requirements.txt                       # numpy + pandas, pinned
 # put the downloaded bundle in ./data  (or: export MTAH_DATA_DIR=/path/to/bundle)
-python solution/run.py --out evaluation/results/<team_name>.csv
-python evaluation/validate_submission.py evaluation/results/<team_name>.csv
+python solution/run.py                                # -> evaluation/results/Task Force 141.csv
+python evaluation/validate_submission.py "evaluation/results/Task Force 141.csv"
 python evaluation/run_evaluation.py                   # public 5 min: correctness check only
 python -I solution/test_pipeline.py                   # synthetic smoke test, needs no data
 ```
