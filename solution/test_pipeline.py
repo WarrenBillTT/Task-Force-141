@@ -50,14 +50,16 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         raw, meta = os.path.join(tmp, "atd.txt"), os.path.join(tmp, "atd.xml")
         simulate.write_atd(sim, raw, meta, PITCH)
-        ball, players, team = atd.load_atd(raw, meta, N, PITCH)
+        ball, players, speed, team = atd.load_atd(raw, meta, N, PITCH)
 
     both = ~np.isnan(ball[:, 0]) & ~np.isnan(sim["ball"][:, 0])
     assert np.abs(ball[both] - sim["ball"][both]).max() < 0.02, "ball round-trip"
     assert np.array_equal(team, sim["team"]), "team slots"
+    seen = ~np.isnan(speed) & ~np.isnan(sim["speed"])
+    assert np.abs(speed[seen] - sim["speed"][seen]).max() < 0.01, "speed round-trip"
     print("parser round-trip OK; ball visible on {:.1f}% of frames".format(100 * np.mean(~np.isnan(ball[:, 0]))))
 
-    sig = run.build_signals(ball, players, team, PITCH)
+    sig = run.build_signals(ball, players, speed, team, PITCH)
     labels = run.predict(sig, BLOCKS, model.Config(), kickoff2=KICKOFF2, n_frames=N)
     labels_nokick = run.predict(sig, BLOCKS, model.Config(), kickoff2=None, n_frames=N)
     assert (labels[10500:KICKOFF2] == "D").all(), "pre-kickoff must be D"

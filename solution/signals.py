@@ -62,6 +62,21 @@ def team_distances(ball, players, team):
     return out[0].astype(np.float32), out[1].astype(np.float32)
 
 
+def team_speed(speed, window=FPS):
+    """Average speed of every tracked player, over a centred window of `window` frames.
+
+    During a stoppage nearly everyone walks; during play the average sits well above walking pace.
+    It needs no ball, which matters because a third of dead-ball frames have none.
+    """
+    seen = ~np.isnan(speed)
+    total = np.where(seen, speed, 0.0).sum(axis=1)
+    count = seen.sum(axis=1).astype(np.float64)
+    kernel = np.ones(window)
+    total = np.convolve(total, kernel, "same")
+    count = np.convolve(count, kernel, "same")
+    return np.where(count > 0, total / np.maximum(count, 1.0), np.nan).astype(np.float32)
+
+
 def out_of_play(ball, pitch, margin=0.5):
     """True where the ball is beyond a touchline or goal line by more than `margin` metres."""
     length, width = pitch
