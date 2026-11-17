@@ -1,7 +1,7 @@
 """Build the possession submission:  data bundle -> frame,label CSV.
 
-    python solution/run.py --out evaluation/results/<team_name>.csv
-    python evaluation/validate_submission.py evaluation/results/<team_name>.csv
+    python solution/run.py                       # writes evaluation/results/Task Force 141.csv
+    python evaluation/validate_submission.py "evaluation/results/Task Force 141.csv"
     python evaluation/run_evaluation.py          # public 5 min: a correctness check, never a tuning set
 
 Deterministic: same data + same code = same file.
@@ -26,6 +26,7 @@ from games import GAME, GAMES, half_video_blocks, require, source_frames  # noqa
 
 SET_PIECE_CODE = "set pieces"
 SECOND_HALF_KICKOFF = 113742  # published in DATA.md / FAQ.md and starter/load_smart_tagging.py
+DEFAULT_OUT = os.path.join(ROOT, "evaluation", "results", "Task Force 141.csv")
 
 # Smart Tagging phases and what their Team tag means. In the first group the tagged team has the
 # ball, in the second it is defending. Left out: the box codes (scrambles, both teams on the ball),
@@ -115,7 +116,8 @@ def write_csv(path, labels):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--out", default=DEFAULT_OUT,
+                        help="default: evaluation/results/Task Force 141.csv (named after the team)")
     parser.add_argument("--data-dir", default=None, help="default: ./data or $MTAH_DATA_DIR")
     parser.add_argument("--no-tagging", action="store_true", help="ignore Smart Tagging")
     for name, value in vars(model.Config()).items():
@@ -144,7 +146,7 @@ def main():
     counts = {k: int((labels == k).sum()) for k in "HADX"}
     print("wrote {}  rows={}  {}".format(args.out, len(labels), counts))
     print(summary(labels, blocks))
-    print("next: python evaluation/validate_submission.py {}".format(args.out))
+    print('next: python evaluation/validate_submission.py "{}"'.format(args.out))
 
 
 if __name__ == "__main__":
